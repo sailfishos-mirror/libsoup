@@ -23,6 +23,7 @@
 #endif
 
 #include <brotli/decode.h>
+#include <brotli/shared_dictionary.h>
 #include <gio/gio.h>
 
 #include "soup-brotli-decompressor.h"
@@ -32,6 +33,7 @@ struct _SoupBrotliDecompressor
 	GObject parent_instance;
 	BrotliDecoderState *state;
 	GError *last_error;
+	GBytes *dictionary;
 };
 
 static void soup_brotli_decompressor_iface_init (GConverterIface *iface);
@@ -43,6 +45,18 @@ SoupBrotliDecompressor *
 soup_brotli_decompressor_new (void)
 {
 	return g_object_new (SOUP_TYPE_BROTLI_DECOMPRESSOR, NULL);
+}
+
+SoupBrotliDecompressor *
+soup_brotli_decompressor_new_with_dictionary (GBytes *dictionary)
+{
+	SoupBrotliDecompressor *self;
+
+	g_return_val_if_fail (dictionary != NULL, NULL);
+
+	self = g_object_new (SOUP_TYPE_BROTLI_DECOMPRESSOR, NULL);
+	self->dictionary = g_bytes_ref (dictionary);
+	return self;
 }
 
 static GError *
@@ -108,6 +122,11 @@ soup_brotli_decompressor_convert (GConverter      *converter,
 			g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED, "SoupBrotliDecompressorError: Failed to initialize state");
 			return G_CONVERTER_ERROR;
 		}
+		if (self->dictionary) {
+			gsize dict_size;
+			const uint8_t *dict_data = g_bytes_get_data (self->dictionary, &dict_size);
+			BrotliDecoderAttachDictionary (self->state, BROTLI_SHARED_DICTIONARY_RAW, dict_size, dict_data);
+		}
 	}
 
 	result = BrotliDecoderDecompressStream (self->state, &available_in, &next_in, &available_out, &next_out, NULL);
@@ -172,6 +191,7 @@ soup_brotli_decompressor_finalize (GObject *object)
 	SoupBrotliDecompressor *self = (SoupBrotliDecompressor *)object;
 	g_clear_pointer (&self->state, BrotliDecoderDestroyInstance);
 	g_clear_error (&self->last_error);
+	g_clear_pointer (&self->dictionary, g_bytes_unref);
 	G_OBJECT_CLASS (soup_brotli_decompressor_parent_class)->finalize (object);
 }
 
