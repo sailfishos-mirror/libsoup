@@ -6,7 +6,9 @@
 #include "test-utils.h"
 #include "soup-message-headers-private.h"
 
+#ifndef G_OS_WIN32
 #include <sys/resource.h>
+#endif
 
 /*
  This test limits memory usage to trigger too large buffer allocation crash.
