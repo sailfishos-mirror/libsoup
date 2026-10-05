@@ -27,6 +27,9 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #endif
+#ifdef G_OS_WIN32
+#include <winsock2.h>
+#endif
 
 typedef struct {
 	GSocket *listener;
