@@ -134,8 +134,14 @@ if not sqlite_dep.found()
   sqlite_dep = dependency('sqlite3')
 endif
 
-brotlidec_dep = dependency('libbrotlidec', required : get_option('brotli'))
-brotlienc_dep = dependency('libbrotlienc', required : get_option('brotli'))
+# brotli-1.1.0+ Required for brotli's shared dictionary APIs
+brotli_required_version = '>= 1.1.0'
+brotlidec_dep = dependency('libbrotlidec',
+                           version : brotli_required_version,
+                           required : get_option('brotli'))
+brotlienc_dep = dependency('libbrotlienc',
+                           version : brotli_required_version,
+                           required : get_option('brotli'))
 if brotlidec_dep.found()
   cdata.set('WITH_BROTLI', true)
 endif
