@@ -61,7 +61,7 @@ test_basic (gconstpointer user_data)
                 GError *error = NULL;
                 guint8 out_buf[16]; /* This is stupidly small just to simulate common usage of converting in chunks */
                 gsize bytes_read, bytes_written;
-                result = g_converter_convert (dec, in_buf, length, out_buf, sizeof out_buf, 0,
+                result = g_converter_convert (dec, in_buf, length, out_buf, sizeof out_buf, G_CONVERTER_INPUT_AT_END,
                                               &bytes_read, &bytes_written, &error);
 
                 g_assert_no_error (error);
@@ -107,7 +107,7 @@ test_corrupt (gconstpointer user_data)
         do {
                 guint8 out_buf[4096];
                 gsize bytes_read, bytes_written;
-                result = g_converter_convert (dec, in_buf, length, out_buf, sizeof out_buf, 0,
+                result = g_converter_convert (dec, in_buf, length, out_buf, sizeof out_buf, G_CONVERTER_INPUT_AT_END,
                                               &bytes_read, &bytes_written, &error);
 
                 in_buf += bytes_read;
@@ -143,7 +143,7 @@ test_reset (gconstpointer user_data)
                 GError *error = NULL;
                 guint8 out_buf[16];
                 gsize bytes_read, bytes_written;
-                result = g_converter_convert (dec, in_buf, in_len, out_buf, sizeof out_buf, 0,
+                result = g_converter_convert (dec, in_buf, in_len, out_buf, sizeof out_buf, G_CONVERTER_INPUT_AT_END,
                                               &bytes_read, &bytes_written, &error);
 
                 /* Just randomly reset in the middle and ensure everything keeps working */
@@ -201,6 +201,65 @@ test_truncated (gconstpointer user_data)
         g_object_unref (dec);
 }
 
+#ifdef WITH_ZSTD
+/* RFC 8878 allows multiple frames to be concatenated, servers may emit one per chunk */
+static void
+test_zstd_multiple_frames (void)
+{
+        char *compressed_filename = g_build_filename (g_test_get_dir (G_TEST_DIST), "compressed-data",
+                                                      "multiframe.zst", NULL);
+        char *uncompressed_filename = g_build_filename (g_test_get_dir (G_TEST_DIST), "compressed-data",
+                                                        "uncompressed.txt", NULL);
+        /* 715 is the size of the first frame, so input ends exactly on the frame boundary */
+        const gsize slice_sizes[] = { 1, 64, 715, G_MAXSIZE };
+        char *compressed, *uncompressed;
+        gsize compressed_length, uncompressed_length;
+
+        g_assert_true (g_file_get_contents (compressed_filename, &compressed, &compressed_length, NULL));
+        g_assert_true (g_file_get_contents (uncompressed_filename, &uncompressed, &uncompressed_length, NULL));
+
+        for (guint i = 0; i < G_N_ELEMENTS (slice_sizes); i++) {
+                GConverter *dec = G_CONVERTER (soup_zstd_decompressor_new ());
+                GByteArray *out_bytes = g_byte_array_new ();
+                char *in_buf = compressed;
+                gsize length = compressed_length;
+                GConverterResult result;
+
+                do {
+                        GError *error = NULL;
+                        guint8 out_buf[16];
+                        gsize bytes_read, bytes_written;
+                        /* Feed input in slices as it would arrive from the network, then
+                         * signal the end of input with an empty buffer. */
+                        gsize in_len = MIN (length, slice_sizes[i]);
+                        GConverterFlags flags = length == 0 ? G_CONVERTER_INPUT_AT_END : 0;
+
+                        result = g_converter_convert (dec, in_buf, in_len, out_buf, sizeof out_buf, flags,
+                                                      &bytes_read, &bytes_written, &error);
+
+                        g_assert_no_error (error);
+                        g_assert_cmpint (result, !=, G_CONVERTER_ERROR);
+
+                        g_byte_array_append (out_bytes, out_buf, bytes_written);
+                        in_buf += bytes_read;
+                        length -= bytes_read;
+                } while (result == G_CONVERTER_CONVERTED);
+
+                g_assert_cmpint (result, ==, G_CONVERTER_FINISHED);
+                g_assert_cmpuint (length, ==, 0);
+                g_assert_cmpmem (out_bytes->data, out_bytes->len, uncompressed, uncompressed_length);
+
+                g_byte_array_free (out_bytes, TRUE);
+                g_object_unref (dec);
+        }
+
+        g_free (compressed);
+        g_free (uncompressed);
+        g_free (compressed_filename);
+        g_free (uncompressed_filename);
+}
+#endif
+
 static void
 add_tests (const char *prefix, const DecompressorTestData *td)
 {
@@ -240,6 +299,7 @@ main (int argc, char **argv)
                 .compressed_ext = ".zst",
         };
         add_tests ("zstd", &zstd_data);
+        g_test_add_func ("/zstd/multiple-frames", test_zstd_multiple_frames);
 #endif
 
         ret = g_test_run ();
